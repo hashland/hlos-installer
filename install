@@ -1,0 +1,75 @@
+#!/bin/sh
+
+TMPDIR=/tmp/hlos
+CPU_ARCH=$(uname -m)
+
+#if [ -n "$BETA" ]; then
+	VERSION=@beta
+#else
+#	VERSION=@stable
+#fi
+
+case $CPU_ARCH in
+	x86_64)
+		TOOLS_URL=http://cdn.hashland.cc/tools/x86_64-static.tar.gz
+		;;
+	armv7l)
+		TOOLS_URL=http://cdn.hashland.cc/tools/armhf-static.tar.gz
+		;;
+	*)
+		echo "Sorry, your cpu architecture is not supported"
+		exit 1
+		;;
+esac
+
+[ ! -d $TMPDIR ] && mkdir $TMPDIR
+cd $TMPDIR 
+
+curl -s "$TOOLS_URL" | tar -xz
+
+if [ -x /usr/bin/lsusb ]; then
+	# search for baikal hash boards
+	if lsusb -d 0483:5740>/dev/null; then 
+		./sgminer-api stats >sgminer.stats
+
+		if grep HWV=37265 sgminer.stats >/dev/null; then
+			echo "Detected Baikal Giant B"
+			BOARD_ID=baikal,giant-b
+		elif grep HWV=29297 sgminer.stats >/dev/null; then
+			echo "Detected Baikal X10"
+			BOARD_ID=baikal,giant-x10
+		fi
+
+	fi
+fi
+
+if [ -z "$BOARD_ID" ]; then
+	echo ""
+	echo "Could not auto detect miner type, specify it manually:"
+	echo ""
+	echo "Example:"
+	echo ""
+	echo "BOARD_ID=baikal,giant-b curl hashland.cc/install | sudo sh"
+	echo
+	echo "Available BOARD_IDs: baikal,giant-b"
+	echo ""
+	exit 1
+fi
+
+
+curl -s -- "https://api.hashland.cc/hlos-sysimages/sysupgrade?board_id=$BOARD_ID&version=$VERSION" >version.json
+
+HLOS_VERSION=$(cat version.json | ./jq -r .data.hlos_sysimage.version)
+HLOS_URL=$(cat version.json | ./jq -r .data.hlos_sysimage.url)
+
+if [ -n "$HLOS_VERSION" ] && [ "$HLOS_VERSION" != "null" ] && [ -n "$HLOS_URL" ]; then
+	echo Found hashland os version $HLOS_VERSION
+
+#	curl -s -- "$HLOS_URL" >test.img
+else
+	echo "Sorry, could not find a hlos sysimage for your board"
+	exit 1
+fi
+
+
+
