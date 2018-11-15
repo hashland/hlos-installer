@@ -3,11 +3,9 @@
 TMPDIR=/tmp/hlos
 CPU_ARCH=$(uname -m)
 
-#if [ -n "$BETA" ]; then
+if [ -z "$VERSION" ]; then
 	VERSION=@beta
-#else
-#	VERSION=@stable
-#fi
+fi
 
 case $CPU_ARCH in
 	x86_64)
@@ -21,49 +19,63 @@ case $CPU_ARCH in
 		exit 1
 		;;
 esac
-
+	
 [ ! -d $TMPDIR ] && mkdir $TMPDIR
 cd $TMPDIR 
 
 curl -s "$TOOLS_URL" | tar -xz
 
-if [ -x /usr/bin/lsusb ]; then
-	# search for baikal hash boards
-	if lsusb -d 0483:5740>/dev/null; then 
-		./sgminer-api stats >sgminer.stats
+if [ -f /lib/functions/uci-defaults.sh ]; then
+	# if we're already on hlos use onboard tooling to find out BOARD_NAME
+	. /lib/functions/uci-defaults.sh
+	BOARD_NAME=$(board_name)
+else
 
-		if grep HWV=37265 sgminer.stats >/dev/null; then
-			echo "Detected Baikal Giant B"
-			BOARD_ID=baikal,giant-b
-		elif grep HWV=29297 sgminer.stats >/dev/null; then
-			echo "Detected Baikal X10"
-			BOARD_ID=baikal,giant-x10
+	if [ -x /usr/bin/lsusb ]; then
+		# search for baikal hash boards
+		if lsusb -d 0483:5740>/dev/null; then 
+			./sgminer-api stats >sgminer.stats
+	
+			if grep HWV=37265 sgminer.stats >/dev/null; then
+				echo "Detected Baikal Giant B"
+				BOARD_NAME=baikal,giant-b
+			elif grep HWV=29297 sgminer.stats >/dev/null; then
+				echo "Detected Baikal X10"
+				BOARD_NAME=baikal,giant-x10
+			fi
+	
 		fi
-
 	fi
 fi
 
-if [ -z "$BOARD_ID" ]; then
+if [ -z "$BOARD_NAME" ]; then
 	echo ""
 	echo "Could not auto detect miner type, specify it manually:"
 	echo ""
 	echo "Example:"
 	echo ""
-	echo "BOARD_ID=baikal,giant-b curl hashland.cc/install | sudo sh"
+	echo "BOARD_NAME=baikal,giant-b curl hashland.cc/install | sudo sh"
 	echo
-	echo "Available BOARD_IDs: baikal,giant-b"
+	echo "Available BOARD_NAMEs: baikal,giant-b"
 	echo ""
+	echo "If your device is supported but not automatically detected "
+	echo "please open an issue at https://github.com/hashland/hlos-installer/issues"
+	echo
 	exit 1
 fi
 
 
-curl -s -- "https://api.hashland.cc/hlos-sysimages/sysupgrade?board_id=$BOARD_ID&version=$VERSION" >version.json
+curl -s -- "https://api.hashland.cc/hlos-sysimages/sysupgrade?name=$BOARD_NAME&version=$VERSION" >version.json
 
 HLOS_VERSION=$(cat version.json | ./jq -r .data.hlos_sysimage.version)
 HLOS_URL=$(cat version.json | ./jq -r .data.hlos_sysimage.url)
 
 if [ -n "$HLOS_VERSION" ] && [ "$HLOS_VERSION" != "null" ] && [ -n "$HLOS_URL" ]; then
 	echo Found hashland os version $HLOS_VERSION
+
+	if [ -x /sbin/sysupgrade ]; then
+		sysupgrade $HLOS_URL
+	fi
 
 #	curl -s -- "$HLOS_URL" >test.img
 else
