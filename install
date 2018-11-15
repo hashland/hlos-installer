@@ -268,8 +268,4 @@ echo
 echo
 
 sync
-		
-# instant reset through magic sysrequest
-#
-echo b > /proc/sysrq-trigger
-
+reboot
