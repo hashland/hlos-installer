@@ -27,6 +27,25 @@ migrate_mac()
 	fi
 }
 
+write_scripta_status()
+{
+if [ -f /var/www/f_status.php ]; then
+	mv /var/www/f_status.php /var/www/f_status.php.bak
+
+	cat <<_EOF_ > /var/www/f_status.php
+	{
+	        "info": [
+	                {"type": "info", "text": "&#10024; Welcome to hashland &#10024;<br>Please stay tuned while we're upgrading your device."}
+	        ],
+	        "status": {
+	                "minerDown": true,
+	                "minerUp": false
+	        }
+	}
+_EOF_
+fi
+}
+
 write_uboot_from_image()
 {
 	IMAGE=$1
@@ -197,9 +216,6 @@ if [ -x /sbin/sysupgrade ]; then
 	exec sysupgrade $HLOS_URL
 fi
 
-echo "Downloading sysimage from $HLOS_URL ..."
-
-curl -- "$HLOS_URL" >/hlos.img
 
 case "$BOARD_NAME" in
        	baikal,giant-b|baikal-x10)
@@ -212,7 +228,12 @@ case "$BOARD_NAME" in
 			echo "Could not find boot.scr, aborting!"
 			exit 1
 		fi
-	
+
+		write_scripta_status
+
+		echo "Downloading sysimage from $HLOS_URL ..."
+		curl -- "$HLOS_URL" >/hlos.img
+
 		OLD_MAC=$(cat /sys/class/net/eth0/address)
 
 		# import SID, SERIAL & MAC environment variables
