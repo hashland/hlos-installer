@@ -7,6 +7,64 @@ if [ -z "$VERSION" ]; then
 	VERSION=@beta
 fi
 
+write_upgrade_uboot_script()
+{
+	IMAGE_NAME=$1
+	FILENAME=$2
+
+	if [ ! -x /usr/bin/mkimage ]; then
+		echo "Missing mkimage tool, aborting!"
+		exit 1
+	fi
+
+	SIZE=$(stat -c %s $IMAGE_NAME)
+	SECTORS=$(expr $SIZE / 512 + 1)
+	SECTORS_HEX=$(printf '0x%x' $SECTORS)
+
+cat <<EOF >$FILENAME.txt
+# load new image into ram
+ext4load mmc 0:2 0x42000000 $IMAGE_NAME
+
+# save environment overlay into ram
+mmc read 0x41000000 0x440 0x100
+
+# write new image
+mmc write 0x42000000 0x0 $BLOCKS_HEX
+
+# write environment overlay back to mmc
+mmc write 0x41000000 0x440 0x100
+
+reset
+EOF
+
+mkimage -C none -A arm -T script -d $FILENAME.txt $FILENAME
+
+if [ ! -f $FILENAME ]; then
+	echo "Could not generate boot script, aborting!"
+	exit 1
+fi
+
+}
+
+board_auto_detect()
+{
+if [ -x /usr/bin/lsusb ]; then
+	# search for baikal hash boards
+	if lsusb -d 0483:5740>/dev/null; then
+		./sgminer-api stats >sgminer.stats
+
+		if grep HWV=37265 sgminer.stats >/dev/null; then
+			echo "Detected Baikal Giant B"
+			BOARD_NAME=baikal,giant-b
+		elif grep HWV=29297 sgminer.stats >/dev/null; then
+			echo "Detected Baikal X10"
+			BOARD_NAME=baikal,giant-x10
+		fi
+
+        fi
+fi
+}
+
 case $CPU_ARCH in
 	x86_64)
 		TOOLS_URL=http://cdn.hashland.cc/tools/x86_64-static.tar.gz
@@ -20,31 +78,31 @@ case $CPU_ARCH in
 		;;
 esac
 	
-[ ! -d $TMPDIR ] && mkdir $TMPDIR
+[ -d $TMPDIR ] && rm -r $TMPDIR
+
+mkdir $TMPDIR
 cd $TMPDIR 
 
-curl -s "$TOOLS_URL" | tar -xz
+echo "Downloading tools..."
 
-if [ -f /lib/functions/uci-defaults.sh ]; then
-	# if we're already on hlos use onboard tooling to find out BOARD_NAME
-	. /lib/functions/uci-defaults.sh
-	BOARD_NAME=$(board_name)
-else
+curl "$TOOLS_URL" -o tools.tar.gz
 
-	if [ -x /usr/bin/lsusb ]; then
-		# search for baikal hash boards
-		if lsusb -d 0483:5740>/dev/null; then 
-			./sgminer-api stats >sgminer.stats
-	
-			if grep HWV=37265 sgminer.stats >/dev/null; then
-				echo "Detected Baikal Giant B"
-				BOARD_NAME=baikal,giant-b
-			elif grep HWV=29297 sgminer.stats >/dev/null; then
-				echo "Detected Baikal X10"
-				BOARD_NAME=baikal,giant-x10
-			fi
-	
-		fi
+if [ ! -f tools.tar.gz ]; then
+	echo "Could not download tools, aborting!"
+	exit 1
+fi
+
+tar -xzf tools.tar.gz
+
+echo ""
+
+if [ -z "$BOARD_NAME" ]; then
+	if [ -f /lib/functions/uci-defaults.sh ]; then
+		# if we're already on hlos use onboard tooling to find out BOARD_NAME
+		. /lib/functions/uci-defaults.sh
+		BOARD_NAME=$(board_name)
+	else
+		board_auto_detect
 	fi
 fi
 
@@ -64,24 +122,53 @@ if [ -z "$BOARD_NAME" ]; then
 	exit 1
 fi
 
+echo ""
+echo -n "Searching for Hashland OS version $VERSION, board $BOARD_NAME ... "
 
 curl -s -- "https://api.hashland.cc/hlos-sysimages/sysupgrade?name=$BOARD_NAME&version=$VERSION" >version.json
 
 HLOS_VERSION=$(cat version.json | ./jq -r .data.hlos_sysimage.version)
 HLOS_URL=$(cat version.json | ./jq -r .data.hlos_sysimage.url)
 
-if [ -n "$HLOS_VERSION" ] && [ "$HLOS_VERSION" != "null" ] && [ -n "$HLOS_URL" ]; then
-	echo Found hashland os version $HLOS_VERSION
-
-	if [ -x /sbin/sysupgrade ]; then
-		exec sysupgrade $HLOS_URL
-	fi
-
-#	curl -s -- "$HLOS_URL" >test.img
-else
-	echo "Sorry, could not find a hlos sysimage for your board"
+if [ -z "$HLOS_VERSION" ] || [ "$HLOS_VERSION" = "null" ] || [ -z "$HLOS_URL" ] || [ "$HLOS_VERSION" = "null" ]; then
+	echo "Could not find a suitable sysimage, aborting!"
 	exit 1
 fi
 
+echo "found Hashland OS version $HLOS_VERSION"
+echo ""
 
+if [ -x /sbin/sysupgrade ]; then
+	exec sysupgrade $HLOS_URL
+fi
 
+echo "Downloading sysimage from $HLOS_URL ..."
+
+curl -- "$HLOS_URL" >/hlos.img
+
+case "$BOARD_NAME" in
+       	baikal,giant-b|baikal-x10)
+		if [ -f /media/boot/boot.scr ]; then
+			BOOT_SCRIPT=/media/boot/boot.scr
+		
+		elif [ -f /boot/boot.scr ]; then
+			BOOT_SCRIPT=/media/boot/boot.scr
+		else
+			echo "Could not find boot.scr, aborting!"
+			exit 1
+		fi
+		
+		write_upgrade_uboot_script /hlos.img boot.scr
+		mv $BOOT_SCRIPT $BOOT_SCRIPT.bak
+		mv boot.scr $BOOT_SCRIPT
+
+		sync
+		
+		# instant reset through magic sysrequest
+		echo b > /proc/sysrq-trigger
+		;;
+	*)
+		echo "Could not determine installation strategy for BOARD_NAME $BOARD_NAME"
+                exit 1
+                ;;
+esac
