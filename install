@@ -3,11 +3,66 @@
 TMPDIR=/tmp/hlos
 CPU_ARCH=$(uname -m)
 
+API_BASE_URL=https://api.hashland.cc
+
 if [ -z "$VERSION" ]; then
 	VERSION=@beta
 fi
 
-write_upgrade_uboot_script()
+migrate_mac()
+{
+	OLD=$1
+	NEW=$2
+	MINER_ID=$(curl -s -H "Authorization: Bearer $API_KEY" "$API_BASE_URL/miners?mac=$OLD" | ./jq -r .data.miners[0].id)
+
+	if [ ! -z "$MINER_ID" ] && [ "$MINER_ID" != "null" ]; then
+		echo ""
+		echo "Setting MAC address for miner id $MINER_ID from $OLD to $NEW"
+		echo ""
+		curl -s -H "Authorization: Bearer $API_KEY" -X PUT -d mac=$NEW "$API_BASE_URL/miners/$MINER_ID" >/dev/null
+	else
+		echo ""
+		echo "MAC Migration requested, but miner not found in database, skipping!"
+		echo ""
+	fi
+}
+
+write_uboot_from_image()
+{
+	IMAGE=$1
+
+	echo
+	echo Installing new bootloader...
+	echo
+
+	dd if=$IMAGE of=/dev/mmcblk0 bs=1024 skip=8 seek=8 count=536 conv=fsync
+}
+
+write_uboot_overlay_env()
+{
+	MAC=$1
+	SERIAL=$2
+
+	if [ ! -x /usr/bin/mkenvimage ]; then
+		echo "Missing mkenvimage tool, aborting!";
+		exit 1
+	fi
+
+	echo "ethaddr=$MAC">uEnv.txt
+
+	if [ ! -z "$SERIAL" ]; then
+		echo "serial#=$SERIAL">>uEnv.txt
+	fi
+	
+	if [ ! -z "$API_KEY" ]; then
+		echo "hashland_api_key=$API_KEY">>uEnv.txt
+	fi
+
+	mkenvimage -s 131072 -o uEnv.bin uEnv.txt
+	dd if=uEnv.bin of=/dev/mmcblk0 bs=1024 seek=544 count=128 conv=fsync
+}
+
+write_uboot_upgrade_script()
 {
 	IMAGE_NAME=$1
 	FILENAME=$2
@@ -29,7 +84,7 @@ ext4load mmc 0:2 0x42000000 $IMAGE_NAME
 mmc read 0x41000000 0x440 0x100
 
 # write new image
-mmc write 0x42000000 0x0 $BLOCKS_HEX
+mmc write 0x42000000 0x0 $SECTORS_HEX
 
 # write environment overlay back to mmc
 mmc write 0x41000000 0x440 0x100
@@ -112,7 +167,7 @@ if [ -z "$BOARD_NAME" ]; then
 	echo ""
 	echo "Example:"
 	echo ""
-	echo "BOARD_NAME=baikal,giant-b curl hashland.cc/install | sudo sh"
+	echo "curl hashland.cc/install | sudo BOARD_NAME=baikal,giant-b sh"
 	echo
 	echo "Available BOARD_NAMEs: baikal,giant-b"
 	echo ""
@@ -125,7 +180,7 @@ fi
 echo ""
 echo -n "Searching for Hashland OS version $VERSION, board $BOARD_NAME ... "
 
-curl -s -- "https://api.hashland.cc/hlos-sysimages/sysupgrade?name=$BOARD_NAME&version=$VERSION" >version.json
+curl -s -- "$API_BASE_URL/hlos-sysimages/sysupgrade?name=$BOARD_NAME&version=$VERSION" >version.json
 
 HLOS_VERSION=$(cat version.json | ./jq -r .data.hlos_sysimage.version)
 HLOS_URL=$(cat version.json | ./jq -r .data.hlos_sysimage.url)
@@ -157,18 +212,43 @@ case "$BOARD_NAME" in
 			echo "Could not find boot.scr, aborting!"
 			exit 1
 		fi
-		
-		write_upgrade_uboot_script /hlos.img boot.scr
+	
+		OLD_MAC=$(cat /sys/class/net/eth0/address)
+
+		# import SID, SERIAL & MAC environment variables
+		eval $(./sunxi-siddump)
+
+		# generate upgrade boot script	
+		write_uboot_upgrade_script /hlos.img boot.scr
+
+
+		if [ ! -z "$MIGRATE_MAC" ]; then
+			# generate u-boot overlay environment to preserve old mac address
+			migrate_mac "$OLD_MAC" "$MAC"
+			OLD_MAC=$MAC
+		fi
+
 		mv $BOOT_SCRIPT $BOOT_SCRIPT.bak
 		mv boot.scr $BOOT_SCRIPT
 
-		sync
-		
-		# instant reset through magic sysrequest
-		echo b > /proc/sysrq-trigger
+		write_uboot_from_image "/hlos.img"	
+		write_uboot_overlay_env "$OLD_MAC" "$SERIAL"
 		;;
 	*)
 		echo "Could not determine installation strategy for BOARD_NAME $BOARD_NAME"
                 exit 1
                 ;;
 esac
+
+echo
+echo
+echo Please wait a few minutes until the upgrade is finished. Do not turn power off while upgrade is in process!
+echo
+echo
+
+sync
+		
+# instant reset through magic sysrequest
+#
+echo b > /proc/sysrq-trigger
+
