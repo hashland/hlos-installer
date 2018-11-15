@@ -74,7 +74,7 @@ if [ -n "$HLOS_VERSION" ] && [ "$HLOS_VERSION" != "null" ] && [ -n "$HLOS_URL" ]
 	echo Found hashland os version $HLOS_VERSION
 
 	if [ -x /sbin/sysupgrade ]; then
-		sysupgrade $HLOS_URL
+		exec sysupgrade $HLOS_URL
 	fi
 
 #	curl -s -- "$HLOS_URL" >test.img
