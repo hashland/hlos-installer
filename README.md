@@ -22,7 +22,7 @@ Or to run it with environment variables set:
 
 ## Environment variables
 
-`BOARD_NAME` Name of the board if auto detection does not works
+`BOARD_NAME` Name of the board if auto detection does not work
 
 `VERSION` Install a specific version of hlos. For example `@beta` for latest beta stability, `@stable` for latest stable stability or a specific version like `18.11`
 
