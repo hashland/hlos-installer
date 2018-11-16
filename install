@@ -186,7 +186,7 @@ if [ -z "$BOARD_NAME" ]; then
 	echo ""
 	echo "Example:"
 	echo ""
-	echo "curl hashland.cc/install | sudo BOARD_NAME=baikal,giant-b sh"
+	echo "curl https://hashland.cc/install | sudo BOARD_NAME=baikal,giant-b sh"
 	echo
 	echo "Available BOARD_NAMEs: baikal,giant-b"
 	echo ""
