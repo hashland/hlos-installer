@@ -1,5 +1,8 @@
 all: clean build/install
 
+release: clean build/install
+	rsync -avz build/* root@cdn.hashland.cc:/var/www/html/installer/
+
 build:
 	mkdir build
 
