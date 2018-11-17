@@ -141,10 +141,10 @@ fi
 
 case $CPU_ARCH in
 	x86_64)
-		TOOLS_URL=http://cdn.hashland.cc/installer/tools-x86_64.tar.gz
+		TOOLS_URL=https://cdn.hashland.cc/installer/tools-x86_64.tar.gz
 		;;
 	armv7l)
-		TOOLS_URL=http://cdn.hashland.cc/installer/tools-armhf.tar.gz
+		TOOLS_URL=https://cdn.hashland.cc/installer/tools-armhf.tar.gz
 		;;
 	*)
 		echo "Sorry, your cpu architecture is not supported"
